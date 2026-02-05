@@ -88,8 +88,7 @@ public class SeleniumParser {
             System.out.println("Найдено вкладок: " + tabPanes.size());
 
             // Парсим каждую вкладку
-            for (int i = 0; i < tabPanes.size(); i++) {
-                WebElement tabPane = tabPanes.get(i);
+            for (WebElement tabPane : tabPanes) {
                 String leagueName = getLeagueNameFromTab(tabPane);
                 System.out.println("Обработка лиги: " + leagueName);
 
