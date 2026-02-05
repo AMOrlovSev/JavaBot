@@ -1,6 +1,7 @@
 package com.hockey.bot.utils;
 
 import com.hockey.bot.models.MatchInfo;
+import com.hockey.bot.models.PeriodInfo;
 import com.hockey.bot.models.PeriodStats;
 import java.io.IOException;
 import java.util.List;
@@ -32,6 +33,19 @@ public class ParserUtils {
             }
         } else {
             return SimpleParser.getPeriodStats(matchId);
+        }
+    }
+
+    public static PeriodInfo getPeriodInfo(String matchId) throws IOException {
+        if (useSelenium) {
+            try {
+                return SeleniumParser.getPeriodInfo(matchId);
+            } catch (Exception e) {
+                System.err.println("Selenium не удалось получить информацию о периоде: " + e.getMessage());
+                return SimpleParser.getPeriodInfo(matchId);
+            }
+        } else {
+            return SimpleParser.getPeriodInfo(matchId);
         }
     }
 

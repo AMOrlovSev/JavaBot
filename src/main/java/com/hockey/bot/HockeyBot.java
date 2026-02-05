@@ -1,6 +1,7 @@
 package com.hockey.bot;
 
 import com.hockey.bot.models.MatchInfo;
+import com.hockey.bot.models.PeriodInfo;
 import com.hockey.bot.models.PeriodStats;
 import com.hockey.bot.utils.ParserUtils;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
@@ -50,6 +51,7 @@ public class HockeyBot extends TelegramLongPollingBot {
             }
 
             int liveCount = 0;
+            int secondPeriodCount = 0;
             int analyzedCount = 0;
             int signalCount = 0;
 
@@ -67,27 +69,50 @@ public class HockeyBot extends TelegramLongPollingBot {
                     System.out.println("   Счет: " + match.getHomeScore() + ":" + match.getAwayScore());
 
                     try {
+                        // Получаем информацию о текущем периоде и статистику
+                        PeriodInfo periodInfo = ParserUtils.getPeriodInfo(match.getMatchId());
                         PeriodStats stats = ParserUtils.getPeriodStats(match.getMatchId());
 
-                        if (stats != null) {
-                            analyzedCount++;
+                        if (periodInfo != null && stats != null) {
                             System.out.println("   📊 Период 1: " + stats.getFirstPeriodHomeGoals() +
                                     ":" + stats.getFirstPeriodAwayGoals());
-                            System.out.println("   📈 Всего шайб: " + stats.getFirstPeriodTotalGoals());
+                            System.out.println("   📈 Всего шайб в 1-м периоде: " + stats.getFirstPeriodTotalGoals());
+                            System.out.println("   ⏱️ Текущий период: " + periodInfo.getCurrentPeriod());
+                            System.out.println("   🕐 Время текущего периода: " + periodInfo.getCurrentPeriodTime());
 
-                            if (stats.isFirstPeriodLessThanThree()) {
-                                System.out.println("   🚨 УСЛОВИЕ ВЫПОЛНЕНО! TM 2.5 в 1-м периоде!");
-                                sendAlert(match, stats);
-                                signalCount++;
+                            // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Проверяем, что первый период завершен
+                            // (мачт находится во 2-м, 3-м периоде или овертайме)
+                            boolean isFirstPeriodCompleted =
+                                    periodInfo.getCurrentPeriod() > 1 ||
+                                            "Перерыв".equalsIgnoreCase(periodInfo.getMatchStatus());
+
+                            if (isFirstPeriodCompleted) {
+                                secondPeriodCount++;
+                                System.out.println("   ✅ Первый период завершен!");
+
+                                if (stats.isFirstPeriodLessThanThree()) {
+                                    System.out.println("   🚨 УСЛОВИЕ ВЫПОЛНЕНО! TM 2.5 в 1-м периоде!");
+                                    sendAlert(match, stats, periodInfo);
+                                    signalCount++;
+                                    notifiedMatches.add(match.getMatchId());
+                                    System.out.println("   ✅ Матч помечен как обработанный");
+                                } else {
+                                    System.out.println("   ⚠️ Условие НЕ выполнено: в 1-м периоде 3 или более шайб");
+                                    // Также помечаем как обработанный, чтобы не проверять снова
+                                    notifiedMatches.add(match.getMatchId());
+                                    System.out.println("   📝 Матч помечен как обработанный (условие не выполнено)");
+                                }
+                            } else {
+                                System.out.println("   ⏳ Первый период еще не завершен, пропускаем...");
                             }
 
-                            notifiedMatches.add(match.getMatchId());
-                            System.out.println("   ✅ Матч помечен как обработанный");
+                            analyzedCount++;
                         } else {
                             System.out.println("   ⚠ Статистика периодов не найдена");
                         }
                     } catch (Exception e) {
                         System.err.println("   ❗ Ошибка: " + e.getMessage());
+                        e.printStackTrace();
                     }
                 }
             }
@@ -95,6 +120,7 @@ public class HockeyBot extends TelegramLongPollingBot {
             System.out.println("\n📊 ИТОГ:");
             System.out.println("Всего матчей: " + matches.size());
             System.out.println("Live матчей: " + liveCount);
+            System.out.println("Матчей во 2+ периоде: " + secondPeriodCount);
             System.out.println("Проанализировано: " + analyzedCount);
             System.out.println("Сигналов отправлено: " + signalCount);
             System.out.println("Обработано всего: " + notifiedMatches.size());
@@ -107,20 +133,83 @@ public class HockeyBot extends TelegramLongPollingBot {
         System.out.println("=== Конец проверки ===\n");
     }
 
-    private void sendAlert(MatchInfo match, PeriodStats stats) {
+    private void sendAlert(MatchInfo match, PeriodStats stats, PeriodInfo periodInfo) {
         String message = "🏒 *СИГНАЛ: ТМ 2.5 В 1-М ПЕРИОДЕ*\n\n" +
                 "🔥 " + match.getHomeTeam() + " — " + match.getAwayTeam() + "\n" +
                 "🏆 Лига: " + match.getTournament() + "\n" +
-                "📊 Счет 1-го пер: *" + stats.getFirstPeriodHomeGoals() + ":" +
+                "📊 Счет 1-го периода: *" + stats.getFirstPeriodHomeGoals() + ":" +
                 stats.getFirstPeriodAwayGoals() + "*\n" +
-                "🎯 Всего шайб: *" + stats.getFirstPeriodTotalGoals() + "*\n" +
-                "✅ Условие выполнено!";
+                "🎯 Всего шайб в 1-м периоде: *" + stats.getFirstPeriodTotalGoals() + "*\n" +
+                "⏱️ Текущий период: *" + periodInfo.getCurrentPeriod() + "*\n" +
+                "✅ Условие выполнено! Первый период завершен с ТМ 2.5";
 
         System.out.println("📤 Отправка уведомления в " + monitoringChats.size() + " чат(ов)");
 
         for (Long chatId : monitoringChats) {
             sendMessage(chatId, message);
         }
+    }
+
+    // Обновите метод handleAnalyzeCommand, чтобы он тоже использовал PeriodInfo
+    private void handleAnalyzeCommand(long chatId, String matchId) {
+        if (matchId.isEmpty()) {
+            sendMessage(chatId, "⚠️ Укажите ID матча\n" +
+                    "Пример: /analyze 1184998");
+            return;
+        }
+
+        if (!matchId.matches("\\d+")) {
+            sendMessage(chatId, "⚠️ ID матча должен содержать только цифры\n" +
+                    "Пример: /analyze 1184998");
+            return;
+        }
+
+        sendMessage(chatId, "🔬 *Анализ матча " + matchId + "*\n\nЗапускаю анализ...");
+
+        new Thread(() -> {
+            try {
+                ParserUtils.analyzeMatchPage(matchId);
+                sendMessage(chatId, "✅ Анализ структуры завершен. Результаты в консоли.");
+
+                // Получаем статистику периодов и информацию о периоде
+                PeriodStats stats = ParserUtils.getPeriodStats(matchId);
+                PeriodInfo periodInfo = ParserUtils.getPeriodInfo(matchId);
+
+                if (stats != null && periodInfo != null) {
+                    StringBuilder result = new StringBuilder();
+                    result.append("📊 *Статистика периодов:*\n\n");
+                    result.append("• ID матча: ").append(matchId).append("\n");
+                    result.append("• Счет 1-го пер: ").append(stats.getFirstPeriodHomeGoals())
+                            .append(":").append(stats.getFirstPeriodAwayGoals()).append("\n");
+                    result.append("• Всего шайб: ").append(stats.getFirstPeriodTotalGoals()).append("\n");
+                    result.append("• Текущий период: ").append(periodInfo.getCurrentPeriod()).append("\n");
+                    result.append("• Время периода: ").append(periodInfo.getCurrentPeriodTime()).append("\n");
+                    result.append("• Статус: ").append(periodInfo.getMatchStatus()).append("\n");
+                    result.append("• Первый период завершен: ");
+
+                    boolean isFirstPeriodCompleted = periodInfo.getCurrentPeriod() > 1 ||
+                            "Перерыв".equalsIgnoreCase(periodInfo.getMatchStatus());
+
+                    result.append(isFirstPeriodCompleted ? "✅ ДА" : "❌ НЕТ").append("\n");
+                    result.append("• Условие TM 2.5: ");
+
+                    if (stats.isFirstPeriodLessThanThree() && isFirstPeriodCompleted) {
+                        result.append("✅ ВЫПОЛНЕНО (меньше 3 шайб и период завершен)");
+                    } else if (!isFirstPeriodCompleted) {
+                        result.append("⏳ ОЖИДАНИЕ (первый период еще не завершен)");
+                    } else {
+                        result.append("❌ НЕ выполнено (3 или больше шайб)");
+                    }
+
+                    sendMessage(chatId, result.toString());
+                } else {
+                    sendMessage(chatId, "❌ Не удалось получить статистику периодов.");
+                }
+            } catch (Exception e) {
+                sendMessage(chatId, "❌ Ошибка анализа: " + e.getMessage());
+                e.printStackTrace();
+            }
+        }).start();
     }
 
     @Override
@@ -237,7 +326,7 @@ public class HockeyBot extends TelegramLongPollingBot {
                 "Я отслеживаю хоккейные матчи с сайта sportregion2020.ru в реальном времени.\n\n" +
                 "📊 *Условие сигнала:*\n" +
                 "• Матч в статусе Live\n" +
-                "• Первый период завершен\n" +
+                "• Первый период завершен (начался 2-й период)\n" +
                 "• Меньше 3 шайб в 1-м периоде\n\n" +
                 "🚨 *При выполнении условия вы получите уведомление!*\n\n" +
                 "📋 *Доступные команды:*\n" +
@@ -270,6 +359,7 @@ public class HockeyBot extends TelegramLongPollingBot {
                 "🔍 *Как это работает:*\n" +
                 "• Проверка каждую минуту\n" +
                 "• Только Live матчи\n" +
+                "• Только после завершения 1-го периода (когда начался 2-й период)\n" +
                 "• Все лиги: 3HL SOUTH/NORTH, MNHL2x2 A/B\n" +
                 "• Уведомление сразу после завершения 1-го периода\n\n" +
                 "📊 *Статистика:*\n" +
@@ -306,9 +396,10 @@ public class HockeyBot extends TelegramLongPollingBot {
             statusMsg.append("📅 *Расписание проверок:*\n");
             statusMsg.append("• Каждую минуту\n");
             statusMsg.append("• Только Live матчи\n");
+            statusMsg.append("• Только после завершения 1-го периода\n");
             statusMsg.append("• Все лиги\n\n");
             statusMsg.append("🎯 *Условие сигнала:*\n");
-            statusMsg.append("Меньше 3 шайб в 1-м периоде");
+            statusMsg.append("Меньше 3 шайб в 1-м периоде (после его завершения)");
         } else {
             statusMsg.append("ℹ️ Для начала мониторинга отправьте /monitor");
         }
@@ -443,13 +534,13 @@ public class HockeyBot extends TelegramLongPollingBot {
                 "Бот парсит сайт sportregion2020.ru и проверяет хоккейные матчи.\n\n" +
                 "📊 *Условие сигнала:*\n" +
                 "• Матч в статусе Live\n" +
-                "• Первый период завершен\n" +
+                "• Первый период завершен (начался 2-й период)\n" +
                 "• Меньше 3 шайб в 1-м периоде\n\n" +
                 "🚨 *Как это работает:*\n" +
                 "1. Бот проверяет сайт каждую минуту\n" +
                 "2. Находит все Live матчи\n" +
-                "3. Анализирует счет первого периода\n" +
-                "4. Если шайб < 3 - отправляет сигнал\n\n" +
+                "3. Определяет текущий период матча\n" +
+                "4. Если 1-й период завершен и шайб < 3 - отправляет сигнал\n\n" +
                 "📋 *Команды для всех:*\n" +
                 "/start - информация о боте\n" +
                 "/monitor - начать получать уведомления\n" +
@@ -472,54 +563,6 @@ public class HockeyBot extends TelegramLongPollingBot {
         }
 
         sendMessage(chatId, message);
-    }
-
-    private void handleAnalyzeCommand(long chatId, String matchId) {
-        if (matchId.isEmpty()) {
-            sendMessage(chatId, "⚠️ Укажите ID матча\n" +
-                    "Пример: /analyze 1184998");
-            return;
-        }
-
-        if (!matchId.matches("\\d+")) {
-            sendMessage(chatId, "⚠️ ID матча должен содержать только цифры\n" +
-                    "Пример: /analyze 1184998");
-            return;
-        }
-
-        sendMessage(chatId, "🔬 *Анализ матча " + matchId + "*\n\nЗапускаю анализ...");
-
-        new Thread(() -> {
-            try {
-                ParserUtils.analyzeMatchPage(matchId);
-                sendMessage(chatId, "✅ Анализ структуры завершен. Результаты в консоли.");
-
-                // Получаем статистику периодов
-                PeriodStats stats = ParserUtils.getPeriodStats(matchId);
-                if (stats != null) {
-                    StringBuilder result = new StringBuilder();
-                    result.append("📊 *Статистика периодов:*\n\n");
-                    result.append("• ID матча: ").append(matchId).append("\n");
-                    result.append("• Счет 1-го пер: ").append(stats.getFirstPeriodHomeGoals())
-                            .append(":").append(stats.getFirstPeriodAwayGoals()).append("\n");
-                    result.append("• Всего шайб: ").append(stats.getFirstPeriodTotalGoals()).append("\n");
-                    result.append("• Условие TM 2.5: ");
-
-                    if (stats.isFirstPeriodLessThanThree()) {
-                        result.append("✅ ВЫПОЛНЕНО (меньше 3 шайб)");
-                    } else {
-                        result.append("❌ НЕ выполнено (3 или больше шайб)");
-                    }
-
-                    sendMessage(chatId, result.toString());
-                } else {
-                    sendMessage(chatId, "❌ Не удалось получить статистику периодов.");
-                }
-            } catch (Exception e) {
-                sendMessage(chatId, "❌ Ошибка анализа: " + e.getMessage());
-                e.printStackTrace();
-            }
-        }).start();
     }
 
     private void handleDebugCommand(long chatId) {
@@ -611,22 +654,34 @@ public class HockeyBot extends TelegramLongPollingBot {
         new Thread(() -> {
             try {
                 PeriodStats stats = ParserUtils.getPeriodStats("1184998");
+                PeriodInfo periodInfo = ParserUtils.getPeriodInfo("1184998");
 
                 StringBuilder testMsg = new StringBuilder();
                 testMsg.append("📊 *Результаты теста:*\n\n");
 
-                if (stats != null) {
+                if (stats != null && periodInfo != null) {
                     testMsg.append("✅ Статистика получена успешно!\n\n");
                     testMsg.append("• ID матча: 1184998\n");
                     testMsg.append("• Счет 1-го пер: ").append(stats.getFirstPeriodHomeGoals())
                             .append(":").append(stats.getFirstPeriodAwayGoals()).append("\n");
                     testMsg.append("• Всего шайб: ").append(stats.getFirstPeriodTotalGoals()).append("\n");
+                    testMsg.append("• Текущий период: ").append(periodInfo.getCurrentPeriod()).append("\n");
+                    testMsg.append("• Время периода: ").append(periodInfo.getCurrentPeriodTime()).append("\n");
+                    testMsg.append("• Статус: ").append(periodInfo.getMatchStatus()).append("\n");
+                    testMsg.append("• Первый период завершен: ");
+
+                    boolean isFirstPeriodCompleted = periodInfo.getCurrentPeriod() > 1 ||
+                            "Перерыв".equalsIgnoreCase(periodInfo.getMatchStatus());
+
+                    testMsg.append(isFirstPeriodCompleted ? "✅ ДА" : "❌ НЕТ").append("\n");
                     testMsg.append("• Условие TM 2.5: ");
 
-                    if (stats.isFirstPeriodLessThanThree()) {
-                        testMsg.append("✅ ВЫПОЛНЕНО (меньше 3 шайб)\n");
+                    if (stats.isFirstPeriodLessThanThree() && isFirstPeriodCompleted) {
+                        testMsg.append("✅ ВЫПОЛНЕНО (меньше 3 шайб и период завершен)");
+                    } else if (!isFirstPeriodCompleted) {
+                        testMsg.append("⏳ ОЖИДАНИЕ (первый период еще не завершен)");
                     } else {
-                        testMsg.append("❌ НЕ выполнено (3 или больше шайб)\n");
+                        testMsg.append("❌ НЕ выполнено (3 или больше шайб)");
                     }
                 } else {
                     testMsg.append("❌ Не удалось получить статистику.\n");

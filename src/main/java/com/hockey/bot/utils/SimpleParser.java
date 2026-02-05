@@ -1,6 +1,7 @@
 package com.hockey.bot.utils;
 
 import com.hockey.bot.models.MatchInfo;
+import com.hockey.bot.models.PeriodInfo;
 import com.hockey.bot.models.PeriodStats;
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -47,6 +48,32 @@ public class SimpleParser {
         if (matchId.equals("1184703")) return new PeriodStats("(4:6)");
         if (matchId.equals("1184998")) return new PeriodStats("(2:1)");
         return new PeriodStats("(2:1)");
+    }
+
+    public static PeriodInfo getPeriodInfo(String matchId) throws IOException {
+        // Тестовые данные
+        PeriodInfo periodInfo = new PeriodInfo();
+
+        // Для тестового матча 1184998 возвращаем, что это 2-й период (первый завершен)
+        if (matchId.equals("1184998")) {
+            periodInfo.setCurrentPeriod(2);
+            periodInfo.setCurrentPeriodTime("05:30");
+            periodInfo.setMatchStatus("Идет");
+        }
+        // Для тестового матча 1184703 возвращаем, что это 1-й период (еще не завершен)
+        else if (matchId.equals("1184703")) {
+            periodInfo.setCurrentPeriod(1);
+            periodInfo.setCurrentPeriodTime("18:45");
+            periodInfo.setMatchStatus("Идет");
+        }
+        // Для остальных - по умолчанию 1-й период
+        else {
+            periodInfo.setCurrentPeriod(1);
+            periodInfo.setCurrentPeriodTime("00:00");
+            periodInfo.setMatchStatus("Идет");
+        }
+
+        return periodInfo;
     }
 
     public static void debugPageStructure() throws IOException {
